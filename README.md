@@ -4,7 +4,29 @@ A local [Model Context Protocol](https://modelcontextprotocol.io/) server for Ji
 
 Runs over **stdio** on Node.js 22 or later, using the official MCP TypeScript SDK. Designed for Claude Code, its subagents, and Claude Desktop.
 
-**Publication status:** available from this GitHub repository. The npm package has not been published; its proposed name is `@mishahorodnytskyi/jira-mcp`.
+## Connect through npm
+
+Package: [`@misha_m.g/jira-mcp`](https://www.npmjs.com/package/@misha_m.g/jira-mcp).
+
+Create an env file using [`.env.example`](.env.example), fill in your Jira credentials, and add the following to your MCP client configuration:
+
+```json
+{
+  "mcpServers": {
+    "jira": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@misha_m.g/jira-mcp@0.1.0",
+        "--env-file",
+        "/absolute/path/to/your/project/.env"
+      ]
+    }
+  }
+}
+```
+
+The client downloads the package and runs it locally. Node.js 22+ and npm must be available on the machine. Pinning the version makes updates explicit.
 
 ## Run from source
 
@@ -148,7 +170,7 @@ To test an archive through `npx` before publishing:
 npm run smoke -- --command npx --args -y --package /absolute/path/to/package.tgz jira-mcp
 ```
 
-The `examples/claude-code.json` and `examples/claude-desktop.json` files show the intended npm configuration **after publication**. Until then, use `examples/local.json` or a local archive. The proposed npm scope is not yet confirmed.
+The `examples/claude-code.json` and `examples/claude-desktop.json` files contain npm configurations. Use `examples/local.json` when running a source checkout, or the archive command above to test an unpublished build.
 
 ## Structure
 

@@ -1,5 +1,5 @@
 {
-  "name": "@mishahorodnytskyi/jira-mcp",
+  "name": "@misha_m.g/jira-mcp",
   "version": "0.1.0",
   "description": "Small local Jira Cloud MCP server with on-disk attachments",
   "type": "module",
@@ -51,5 +51,9 @@
     "model-context-protocol",
     "claude",
     "attachments"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
 }
