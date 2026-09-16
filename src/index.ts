@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
-import { loadConfig } from './config.js';
+import { ConfigError, loadConfig } from './config.js';
 import { createServer } from './server.js';
-import { AttachmentStore } from './attachments.js';
 
 async function main() {
-  const config = await loadConfig();
-  const store = new AttachmentStore(config);
-  await store.prepare();
-  const server = createServer(config, undefined, store);
+  const config = await loadConfig().catch(error => {
+    if (error instanceof ConfigError) return error;
+    throw error;
+  });
+  const server = createServer(config);
   await server.connect(new StdioServerTransport());
   const close = async () => { await server.close(); process.exit(0); };
   process.once('SIGINT', close);

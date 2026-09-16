@@ -17,7 +17,7 @@ Create an env file using [`.env.example`](.env.example), fill in your Jira crede
       "command": "npx",
       "args": [
         "-y",
-        "@misha_m.g/jira-mcp@0.1.0",
+        "@misha_m.g/jira-mcp@0.1.1",
         "--env-file",
         "/absolute/path/to/your/project/.env"
       ]
@@ -73,7 +73,7 @@ The token owner's Jira permissions still apply. The server uses HTTP Basic authe
 | `JIRA_BASE_URL` | Yes | Site origin, e.g. `https://company.atlassian.net` |
 | `JIRA_EMAIL` | Yes | Token owner's email |
 | `JIRA_API_TOKEN` | Yes | Jira scoped API token |
-| `JIRA_ATTACHMENT_DIR` | Yes | Base directory for downloaded files |
+| `JIRA_ATTACHMENT_DIR` | No | `$XDG_CACHE_HOME/jira-mcp` when XDG_CACHE_HOME is absolute; otherwise `~/.cache/jira-mcp` |
 | `JIRA_CLOUD_ID` | No | Discovered using the site's public `/_edge/tenant_info` endpoint when omitted |
 | `JIRA_READ_ONLY` | No | `false`; set `true` to expose only read tools. The example env file uses `true` |
 | `JIRA_SESSION_ID` | No | New UUID per process; set explicitly to share a session directory between processes |
@@ -83,7 +83,7 @@ The token owner's Jira permissions still apply. The server uses HTTP Basic authe
 
 The server loads an env file **only** when `--env-file` is supplied. Process environment variables override file values. Relative attachment paths resolve against the env file's directory, or the process working directory without an env file. `${VAR}` interpolation inside values is not supported.
 
-Credentials and downloads are excluded from Git and npm packaging. Local configuration errors fail at startup; authentication and permission errors surface when calling Jira. Tokens and raw Jira error bodies are not returned in tool errors.
+Credentials and downloads are excluded from Git and npm packaging. Missing or invalid configuration does not interrupt the MCP handshake or tool listing: tool calls return an explicit configuration error. Fix the environment or env file and restart the MCP server to reload it. Read-only mode still controls tool registration; if the env file cannot be read or the read-only setting is invalid, only read tools are exposed. Authentication and permission errors also surface when calling Jira. Tokens and raw Jira error bodies are not returned in tool errors.
 
 ## Tools
 
@@ -99,6 +99,8 @@ Credentials and downloads are excluded from Git and npm packaging. Local configu
 
 Descriptions and comments are converted from Atlassian Document Format to plain text. Service URLs, avatar objects, and unrelated Jira fields are excluded. **Issue descriptions, comments, metadata, and complete issue responses are not shortened or token-capped by the server.**
 
+Media in descriptions and comments retain their labels, e.g. `[attachment: screenshot.png]`, using Jira attachment metadata when the ID matches or the ADF node's `alt` text otherwise. ADF usually uses a separate Media Services ID. If no name is supplied, the placeholder explicitly says `filename unavailable` and includes that media ID when available; files are never guessed by array position. The original attachment index remains available.
+
 When comments are requested, the server retrieves all Jira pages internally, oldest first. A failed page, invalid pagination, or changed comment count produces an error instead of a partial successful result. Jira does not provide a snapshot across requests; concurrent edits without count changes can still occur.
 
 Search returns only `key`, `summary`, `status`, `type`, and `updated`, without shortening those fields or applying a token budget. It returns up to the requested number of issues supplied by Jira. When `has_more=true`, narrow the JQL; the tool does not expose search pagination or calculate an exact total.
@@ -112,6 +114,8 @@ With `JIRA_READ_ONLY=true`, only `get_issue`, `search_issues`, and `get_attachme
 Write requests are never automatically retried. After a network failure, their outcome may be uncertain; check Jira before retrying.
 
 ## Attachments and sessions
+
+Without an override, downloads use the user's cache directory, independent of the checkout/worktree. Remove `JIRA_ATTACHMENT_DIR` from project MCP configurations to use this default and allow inherited environment overrides. The directory is created only when downloading; an inaccessible directory produces a tool error and does not prevent issue reads or MCP startup. The client must be allowed to read this directory outside the repository.
 
 Files are stored under:
 

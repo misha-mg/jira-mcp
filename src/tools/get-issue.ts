@@ -14,7 +14,7 @@ export async function getIssue(client: JiraClient, args: z.infer<typeof getIssue
     key: args.key, summary: f.summary ?? '', status: f.status?.name ?? '',
     type: f.issuetype?.name ?? '', priority: f.priority?.name ?? null,
     labels: f.labels ?? [], fixVersions: (f.fixVersions ?? []).map(v => v.name),
-    description: fromAdf(f.description).trim(),
+    description: fromAdf(f.description, f.attachment).trim(),
     attachments: (f.attachment ?? []).map(a => ({
       id: a.id, filename: a.filename, mimeType: a.mimeType, size: a.size,
     })),
@@ -37,7 +37,7 @@ export async function getIssue(client: JiraClient, args: z.infer<typeof getIssue
     for (const comment of page.comments) {
       if (!comment.id || seen.has(comment.id)) throw new SafeError('Comment pages overlap or changed. Retry get_issue; no partial issue was returned.');
       seen.add(comment.id);
-      comments.push({ author: comment.author?.displayName ?? 'Unknown', created: comment.created, body: fromAdf(comment.body).trim() });
+      comments.push({ author: comment.author?.displayName ?? 'Unknown', created: comment.created, body: fromAdf(comment.body, f.attachment).trim() });
     }
     start += page.comments.length;
     if (start === total) break;

@@ -11,6 +11,27 @@ test('plain text ADF roundtrip preserves paragraphs, Unicode and literal markdow
   assert.equal(fromAdf(toAdf(text)).trimEnd(), text.replace(/\r\n/g, '\n'));
   assert.equal(fromAdf({ type: 'paragraph', content: [{ type: 'text', text: 'link', marks: [{ type: 'link', attrs: { href: 'https://example.com' } }] }] }).trim(), 'link (https://example.com)');
 });
+test('media labels preserve names and positions without guessing mismatched UUIDs', async () => {
+  const body = { type: 'doc', content: [
+    { type: 'paragraph', content: [{ type: 'text', text: 'Expected result: warning appears' }] },
+    { type: 'mediaSingle', content: [{ type: 'media', attrs: { id: 'media-uuid-2', alt: 'Screen Cast 2026-09-03 at 3.52.46 PM.gif' } }] },
+    { type: 'mediaGroup', content: [
+      { type: 'media', attrs: { id: '101' } },
+      { type: 'media', attrs: { id: 'unknown-media-uuid' } },
+    ] },
+    { type: 'paragraph', content: [{ type: 'mediaInline', attrs: { id: 'another-uuid', alt: 'Детали 👋.png' } }] },
+  ] };
+  const expected = 'Expected result: warning appears\n[attachment: Screen Cast 2026-09-03 at 3.52.46 PM.gif][attachment: screen.png][attachment: media ID unknown-media-uuid; filename unavailable][attachment: Детали 👋.png]';
+  const client = mockClient(url => url.pathname.endsWith('/comment')
+    ? json({ startAt: 0, total: 1, comments: [{ id: '1', created: '2026-09-16', body }] })
+    : json({ ...issue, fields: { ...issue.fields, description: body } }));
+  const result = JSON.parse(await getIssue(client, { key: issue.key, comments: true }));
+  assert.equal(result.description, expected);
+  assert.equal(result.comments[0].body, expected);
+  assert.deepEqual(result.attachments, issue.fields.attachment);
+  assert.equal(fromAdf({ type: 'media', attrs: { alt: '  ' } }), '[attachment: filename unavailable]');
+  assert.equal(fromAdf({ type: 'media', attrs: { alt: 123 } }), '[attachment: filename unavailable]');
+});
 test('normal issue is projected and under 800 reference tokens', async () => {
   const client = mockClient(() => json({ ...issue, self: 'secret-url', author: { avatarUrls: ['noise'] } }));
   const output = await getIssue(client, { key: issue.key });

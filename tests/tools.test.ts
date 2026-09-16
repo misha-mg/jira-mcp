@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { addComment } from '../src/tools/add-comment.js';
 import { transitionIssue } from '../src/tools/transition-issue.js';
 import { config, issue, json, mockClient } from './helpers.js';
 
-test('config validates early; explicit env file resolves paths and environment overrides it', async () => {
+test('config validation: explicit env file resolves paths and environment overrides it', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'jira-config-'));
   try {
     await writeFile(join(folder, '.env'), `JIRA_BASE_URL=https://example.atlassian.net\nJIRA_EMAIL=test@example.com\nJIRA_API_TOKEN=secret\nJIRA_ATTACHMENT_DIR=files\nJIRA_READ_ONLY=true`);
@@ -18,6 +18,31 @@ test('config validates early; explicit env file resolves paths and environment o
     await assert.rejects(loadConfig([], {}), /JIRA_BASE_URL/);
     await assert.rejects(loadConfig(['--env-file', join(folder, '.env')], { JIRA_READ_ONLY: 'yes' }), /JIRA_READ_ONLY/);
     await assert.rejects(loadConfig(['--env-file', join(folder, '.env')], { JIRA_SESSION_ID: '../escape' }), /JIRA_SESSION_ID/);
+  } finally { await rm(folder, { recursive: true, force: true }); }
+});
+test('attachment directory defaults to an absolute user cache, with explicit overrides preserved', async () => {
+  const env = { JIRA_BASE_URL: config.siteUrl, JIRA_EMAIL: config.email, JIRA_API_TOKEN: config.token };
+  for (const XDG_CACHE_HOME of [undefined, '', 'relative/cache', '${CACHE}']) {
+    assert.equal((await loadConfig([], { ...env, XDG_CACHE_HOME })).attachmentDir, join(homedir(), '.cache', 'jira-mcp'));
+  }
+  const cache = join(tmpdir(), 'jira-cache-test');
+  assert.equal((await loadConfig([], { ...env, XDG_CACHE_HOME: cache })).attachmentDir, join(cache, 'jira-mcp'));
+  assert.equal((await loadConfig([], { ...env, XDG_CACHE_HOME: cache, JIRA_ATTACHMENT_DIR: '  ' })).attachmentDir, join(cache, 'jira-mcp'));
+  assert.equal((await loadConfig([], { ...env, JIRA_ATTACHMENT_DIR: cache })).attachmentDir, cache);
+  await assert.rejects(loadConfig([], { ...env, JIRA_ATTACHMENT_DIR: '${JIRA_ATTACHMENT_DIR}' }), /unresolved variable/);
+});
+test('default attachment directory is independent of the env file checkout', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'jira-config-'));
+  try {
+    const values = `JIRA_BASE_URL=${config.siteUrl}\nJIRA_EMAIL=${config.email}\nJIRA_API_TOKEN=${config.token}`;
+    await mkdir(join(folder, 'main'));
+    await mkdir(join(folder, 'worktree'));
+    await writeFile(join(folder, 'main', '.env'), values);
+    await writeFile(join(folder, 'worktree', '.env'), values);
+    const a = await loadConfig(['--env-file', join(folder, 'main', '.env')], {});
+    const b = await loadConfig(['--env-file', join(folder, 'worktree', '.env')], {});
+    assert.equal(a.attachmentDir, join(homedir(), '.cache', 'jira-mcp'));
+    assert.equal(a.attachmentDir, b.attachmentDir);
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
 test('scoped gateway and auth, cloud discovery without credentials', async () => {
