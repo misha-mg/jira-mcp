@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.tgz
+.jira-attachments/
+coverage/
+.DS_Store
+
+# Local planning notes and private verification history
+PRD.md
+IMPLEMENTATION_PLAN.md
+*.private.md
+npm-debug.log*
