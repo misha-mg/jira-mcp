@@ -11,7 +11,7 @@ import { addComment, addCommentSchema } from './tools/add-comment.js';
 import { transitionIssue, transitionIssueSchema } from './tools/transition-issue.js';
 
 export function createServer(config: Config | ConfigError, client?: JiraClient, store?: AttachmentStore) {
-  const server = new McpServer({ name: 'jira-mcp', version: '0.1.2' });
+  const server = new McpServer({ name: 'jira-mcp', version: '0.1.3' });
   const configurationMessage = config instanceof ConfigError ? config.message : '';
   const context = config instanceof ConfigError ? undefined : {
     config, client: client ?? new JiraClient(config), store: store ?? new AttachmentStore(config),

@@ -1,6 +1,6 @@
 {
   "name": "@misha_m.g/jira-mcp",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Small local Jira Cloud MCP server with on-disk attachments",
   "type": "module",
   "bin": {
@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "examples",
     ".env.example"
   ],

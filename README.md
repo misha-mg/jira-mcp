@@ -8,6 +8,8 @@ Runs over **stdio** on Node.js 22 or later, using the official MCP TypeScript SD
 
 Package: [`@misha_m.g/jira-mcp`](https://www.npmjs.com/package/@misha_m.g/jira-mcp).
 
+Release status: `0.1.3` is prepared for the next release and is not published yet. Until publication, run a source checkout or a locally packed archive as described below. See [CHANGELOG.md](CHANGELOG.md) for the planned changes.
+
 Create an env file using [`.env.example`](.env.example), fill in your Jira credentials, and add the following to your MCP client configuration:
 
 ```json
@@ -17,7 +19,7 @@ Create an env file using [`.env.example`](.env.example), fill in your Jira crede
       "command": "npx",
       "args": [
         "-y",
-        "@misha_m.g/jira-mcp@0.1.2",
+        "@misha_m.g/jira-mcp@0.1.3",
         "--env-file",
         "/absolute/path/to/your/project/.env"
       ]
@@ -148,7 +150,7 @@ HTTP redirects are refused; attachment requests use `redirect=false` so credenti
 
 ### HAR and TAR.GZ preparation
 
-Implemented in the current source branch; the published `0.1.2` package does not include this preparation yet. `get_attachments` automatically prepares files ending in `.har`, `.tar.gz`, or `.tgz`, without new tools or input parameters. Other formats retain their original files; video previews keep their existing behavior.
+HAR and TAR.GZ preparation is included in version `0.1.3`. `get_attachments` automatically prepares files ending in `.har`, `.tar.gz`, or `.tgz`, without new tools or input parameters. Other formats retain their original files; video previews keep their existing behavior.
 
 A successful attachment line adds a compact reference:
 
