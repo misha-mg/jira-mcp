@@ -7,6 +7,7 @@ import type { Attachment } from './jira/types.js';
 import type { JiraClient } from './jira/client.js';
 import { SafeError } from './jira/errors.js';
 import { serialize, short, tokens } from './output.js';
+import { frameBudget, isVideo, VideoFrames } from './video-frames.js';
 
 export function safeFilename(name: string): string {
   return name.normalize('NFKC').replace(/[\x00-\x1f\x7f/\\:<>"|?*]/g, '_').replace(/\.{2,}/g, '_').replace(/^[. ]+|[. ]+$/g, '').slice(0, 80) || 'attachment';
@@ -20,7 +21,7 @@ async function directory(path: string) {
 
 export class AttachmentStore {
   private pending: Promise<unknown> = Promise.resolve();
-  constructor(private config: Config) {}
+  constructor(private config: Config, private frames = new VideoFrames(config)) {}
 
   async prepare() {
     try { await directory(this.config.attachmentDir); await access(this.config.attachmentDir, constants.W_OK); }
@@ -44,6 +45,7 @@ export class AttachmentStore {
     await directory(folder);
     if (await realpath(folder) !== resolve(folder)) throw new SafeError('Unsafe attachment directory.');
     let remaining = this.config.maxCallBytes;
+    const videoBudget = frameBudget();
     const rows: string[] = [];
     let processed = 0;
     for (const file of files) {
@@ -52,7 +54,9 @@ export class AttachmentStore {
       const path = join(folder, filename);
       const info = { id: file.id, path, filename, mimeType: short(file.mimeType, 30), size: file.size };
       // Reserve room for an error/skip reason and the final summary before doing any work.
-      if (tokens(rows.join('\n') + '\n' + serialize(info)) > 3650) break;
+      const reserved = isVideo(file) ? { ...info, frames: { directory: `${path}.frames-${'0'.repeat(64)}`, count: 24, sampled: true, reused: true,
+        skipped: 'FFmpeg/ffprobe unavailable. Install both on the MCP host or set JIRA_FFMPEG_PATH and JIRA_FFPROBE_PATH.' } } : info;
+      if (tokens(rows.join('\n') + '\n' + serialize(reserved)) > 3650) break;
       processed++;
       if (file.size > this.config.maxFileBytes || file.size > remaining) {
         rows.push(serialize({ ...info, path: null, skipped: 'size exceeds file or remaining call limit' }));
@@ -61,11 +65,22 @@ export class AttachmentStore {
       const tmp = join(folder, `.${file.id}-${randomUUID()}.part`);
       let handle: Awaited<ReturnType<typeof open>> | undefined;
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      const success = async (reused = false) => {
+        let frames;
+        if (isVideo(file)) {
+          if (this.config.videoFrames === false) frames = { skipped: 'Video frame extraction disabled by JIRA_VIDEO_FRAMES.' };
+          else {
+            try { frames = await this.frames.extract(path, videoBudget); }
+            catch (error) { frames = { skipped: error instanceof SafeError ? short(error.message, 70) : 'Video frame extraction or filesystem operation failed.' }; }
+          }
+        }
+        rows.push(serialize({ ...info, ...(reused ? { reused: true } : {}), ...(frames ? { frames } : {}) }));
+      };
       try {
         try {
           const stat = await lstat(path);
           if (!stat.isFile() || stat.isSymbolicLink()) throw new SafeError('Destination is not a regular file.');
-          if (stat.size === file.size) { rows.push(serialize({ ...info, reused: true })); continue; }
+          if (stat.size === file.size) { await success(true); continue; }
         } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
         const response = await client.download(file.id);
         reader = response.body?.getReader();
@@ -84,7 +99,7 @@ export class AttachmentStore {
         await handle.close(); handle = undefined;
         if (await realpath(folder) !== resolve(folder)) throw new SafeError('Attachment directory changed during download.');
         await rename(tmp, path);
-        rows.push(serialize(info));
+        await success();
       } catch (error) {
         rows.push(serialize({ ...info, path: null, skipped: error instanceof SafeError ? short(error.message, 60) : 'Download or filesystem operation failed; partial file discarded.' }));
       } finally {

@@ -31,6 +31,19 @@ test('attachment directory defaults to an absolute user cache, with explicit ove
   assert.equal((await loadConfig([], { ...env, JIRA_ATTACHMENT_DIR: cache })).attachmentDir, cache);
   await assert.rejects(loadConfig([], { ...env, JIRA_ATTACHMENT_DIR: '${JIRA_ATTACHMENT_DIR}' }), /unresolved variable/);
 });
+test('video frames default on and executable overrides must be absolute paths', async () => {
+  const env = { JIRA_BASE_URL: config.siteUrl, JIRA_EMAIL: config.email, JIRA_API_TOKEN: config.token };
+  assert.equal((await loadConfig([], env)).videoFrames, true);
+  assert.equal((await loadConfig([], { ...env, JIRA_VIDEO_FRAMES: 'false' })).videoFrames, false);
+  await assert.rejects(loadConfig([], { ...env, JIRA_VIDEO_FRAMES: 'yes' }), /JIRA_VIDEO_FRAMES/);
+  for (const name of ['JIRA_FFMPEG_PATH', 'JIRA_FFPROBE_PATH']) {
+    for (const path of ['ffmpeg', '${BIN}/ffmpeg', '/tmp/ff\nmpeg']) {
+      await assert.rejects(loadConfig([], { ...env, [name]: path }), new RegExp(name));
+    }
+    const path = join(tmpdir(), name);
+    assert.equal((await loadConfig([], { ...env, [name]: path }))[name === 'JIRA_FFMPEG_PATH' ? 'ffmpegPath' : 'ffprobePath'], path);
+  }
+});
 test('default attachment directory is independent of the env file checkout', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'jira-config-'));
   try {

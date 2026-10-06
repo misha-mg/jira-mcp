@@ -8,6 +8,7 @@ export interface Config {
   siteUrl: string; email: string; token: string; cloudId?: string;
   attachmentDir: string; sessionId: string; readOnly: boolean;
   maxFileBytes: number; maxCallBytes: number; timeoutMs: number;
+  videoFrames?: boolean; ffmpegPath?: string; ffprobePath?: string;
 }
 
 // Only authored messages may be exposed to MCP clients; never include env values.
@@ -56,6 +57,13 @@ export async function loadConfig(args = process.argv.slice(2), env = process.env
   if (!/^[a-zA-Z0-9_-]{1,80}$/.test(sessionId)) invalid('JIRA_SESSION_ID must contain 1–80 letters, digits, underscores or hyphens.');
   const attachmentDir = values.JIRA_ATTACHMENT_DIR?.trim();
   if (attachmentDir?.includes('${')) invalid('JIRA_ATTACHMENT_DIR contains an unresolved variable. Remove it to use the default cache directory, or set a path.');
+  const videoFrames = values.JIRA_VIDEO_FRAMES ?? 'true';
+  if (!['true', 'false'].includes(videoFrames)) invalid('JIRA_VIDEO_FRAMES must be true or false.');
+  const executable = (name: string) => {
+    const path = values[name]?.trim() || undefined;
+    if (path && (!isAbsolute(path) || path.includes('${') || /[\x00-\x1f]/.test(path))) invalid(`${name} must be an absolute executable path.`);
+    return path;
+  };
   // XDG requires an absolute path. Ignore relative/unexpanded values so the
   // default never depends on the checkout or worktree's working directory.
   const xdg = values.XDG_CACHE_HOME;
@@ -68,5 +76,8 @@ export async function loadConfig(args = process.argv.slice(2), env = process.env
     maxFileBytes: positive('JIRA_MAX_FILE_BYTES', 50_000_000),
     maxCallBytes: positive('JIRA_MAX_CALL_BYTES', 200_000_000),
     timeoutMs: positive('JIRA_TIMEOUT_MS', 30_000),
+    videoFrames: videoFrames === 'true',
+    ffmpegPath: executable('JIRA_FFMPEG_PATH'),
+    ffprobePath: executable('JIRA_FFPROBE_PATH'),
   };
 }

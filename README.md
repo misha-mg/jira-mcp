@@ -17,7 +17,7 @@ Create an env file using [`.env.example`](.env.example), fill in your Jira crede
       "command": "npx",
       "args": [
         "-y",
-        "@misha_m.g/jira-mcp@0.1.1",
+        "@misha_m.g/jira-mcp@0.1.2",
         "--env-file",
         "/absolute/path/to/your/project/.env"
       ]
@@ -80,6 +80,9 @@ The token owner's Jira permissions still apply. The server uses HTTP Basic authe
 | `JIRA_MAX_FILE_BYTES` | No | `50000000` (50 MB) per file |
 | `JIRA_MAX_CALL_BYTES` | No | `200000000` (200 MB) downloaded per call |
 | `JIRA_TIMEOUT_MS` | No | `30000` per HTTP request, including body consumption |
+| `JIRA_VIDEO_FRAMES` | No | `true`; set `false` to download videos without extracting frame previews |
+| `JIRA_FFMPEG_PATH` | No | Absolute path to the host's FFmpeg executable; otherwise `ffmpeg` on `PATH` |
+| `JIRA_FFPROBE_PATH` | No | Absolute path to ffprobe; defaults to the executable beside an explicit `JIRA_FFMPEG_PATH`, otherwise `ffprobe` on `PATH` |
 
 The server loads an env file **only** when `--env-file` is supplied. Process environment variables override file values. Relative attachment paths resolve against the env file's directory, or the process working directory without an env file. `${VAR}` interpolation inside values is not supported.
 
@@ -91,7 +94,7 @@ Credentials and downloads are excluded from Git and npm packaging. Missing or in
 |---|---|---|
 | `get_issue` | `key`, optional `comments` (default `false`) | Full projected issue as JSON; all accessible comments when requested |
 | `search_issues` | `jql`, optional `limit` (default 10, maximum 50) | One JSON line per issue, followed by `shown` and `has_more` |
-| `get_attachments` | `key`, optional `ids` (up to 100) | Downloaded file paths and metadata, or explicit skip reasons |
+| `get_attachments` | `key`, optional `ids` (up to 100) | Downloaded file paths and metadata; videos also include a folder of sampled JPEG frames, or a frame skip reason |
 | `add_comment` | `key`, `body` | Comment ID and confirmation |
 | `transition_issue` | `key`, `to`, optional `resolution`, `comment` | Target status and confirmation |
 
@@ -139,11 +142,46 @@ The attachment response currently has a 4,000-token reference budget. If more en
 
 HTTP redirects are refused; attachment requests use `redirect=false` so credentials cannot be forwarded to another host. A site returning a redirect despite that flag produces an explicit error.
 
+### Video frame previews
+
+Available starting with version `0.1.2`.
+
+`get_attachments` automatically samples video attachments into **up to 24 JPEG frames distributed across the recording**, including its beginning and a point near its end. Short videos use roughly one sample per second. Images keep their aspect ratio, are not upscaled, and fit within 1280 × 1280 pixels. The original video remains available. Audio is not extracted.
+
+Install a maintained **FFmpeg release with both `ffmpeg` and `ffprobe` on the machine running Jira MCP**. The agents need only a file/image-reading tool with access to the attachment directory. The npm package does not install or download executable binaries. If a desktop MCP client's `PATH` does not include FFmpeg, set `JIRA_FFMPEG_PATH` and, if needed, `JIRA_FFPROBE_PATH` in its env file. A missing decoder does not prevent MCP startup or ordinary attachment downloads.
+
+The video attachment's JSON line retains its existing fields and adds:
+
+```json
+{
+  "frames": {
+    "directory": "/absolute/cache/session/DEMO-123/101-recording.mp4.frames-<sha256>",
+    "count": 24,
+    "sampled": true
+  }
+}
+```
+
+The folder contains `frame-001.jpg`, `frame-002.jpg`, etc., and **`manifest.json`**. The manifest lists each filename, `requestedTimeSeconds`, and byte size, plus the source SHA-256 and video duration. Times are requested seek positions, not guarantees of exact decoded frame timestamps. Read the frames in manifest order. This is a visual overview: events between samples, fine text reduced by scaling, and audio can be missed. Keep the video for detailed investigation.
+
+If extraction is disabled, unavailable, unsafe, unsupported, or fails, the response instead includes `frames.skipped` with a short reason. The video still has a valid `path`; it is not reported as a failed download. Frame extraction also runs for reused video files. Successful previews are reused with `frames.reused=true` after validating the source hash and cached files. A source content change uses a different folder. Incomplete or unsafe caches are refused; remove the affected frame folder from your controlled cache directory to regenerate it on the next call. Old frame folders follow the existing session cleanup policy and are not automatically deleted.
+
+Safety limits are fixed to keep the change small:
+
+- At most 24 frames per video, 1 MB per JPEG, 10 MB of JPEGs per video, and 20 MB across one tool call. Reused frames count toward the call budget; failed decoder output also consumes its reserved allowance. These limits are separate from the original download byte limits.
+- A shared 60-second extraction budget per call, including probing; decoder processes run sequentially with one decoding/filtering/encoding thread. HTTP download time is governed separately by `JIRA_TIMEOUT_MS`.
+- Source duration must be finite and at most 24 hours; dimensions must be positive, at most 8192 per side and 8,847,360 pixels in total. Unknown duration and sources beyond these limits are skipped.
+- Only MOV/MP4, Matroska/WebM and AVI containers are accepted, with H.264, HEVC, VP8, VP9, AV1, MPEG-4 or MJPEG video. Video MIME types and common video filename extensions trigger probing; metadata does not bypass container validation.
+- Decoder processes use argument arrays without a shell, receive no Jira credentials, and have bounded stdout/stderr. Input is restricted to the local file protocol and the allowed container formats; playlists, network protocols, and MOV external track references are blocked. FFmpeg writes JPEGs to a bounded pipe; Node writes private files in a temporary directory and publishes the complete folder by atomic rename. Failures remove temporary results. Paths and cached files are checked for symlinks.
+
+The input restrictions use FFmpeg's documented [protocol allowlist](https://ffmpeg.org/ffmpeg-protocols.html#Protocol-Options), [format allowlist and MOV options](https://ffmpeg.org/ffmpeg-formats.html). They reduce exposure but are **not an OS sandbox**. Use an up-to-date decoder and an attachment directory controlled by the MCP account; hostile concurrent filesystem changes are outside the store's existing threat model. `-max_alloc` limits an individual allocation, not total process memory. Strong process-wide memory or privilege isolation requires host/container limits.
+
 ## Limits
 
 - No server token or response-size cap for issue reads and comment pages.
 - Search: 1–50 results, default 10; no output token budget.
 - Downloads: configurable per-file and per-call byte limits, plus the attachment response budget above.
+- Video previews: sampled frames and separate resource budgets as described above.
 - Other Jira JSON responses: an 8 MB transport safety limit.
 - Success confirmations: up to 50 reference tokens; errors: approximately 200.
 - Combined tool definitions: tested to remain within 700 reference tokens.
