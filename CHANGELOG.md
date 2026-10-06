@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.1.3 — Unreleased
+## 0.1.3 — 2026-10-07
 
-The final 429 MB HAR check through an authenticated Claude Code client passed on 2026-10-06: the complete MCP call took 116.2 seconds with default client timeouts, followed by successful reads of the exact returned index and response-body paths. Release preparation and verification are complete; this version has not been published yet. See the verification notes in [README.md](README.md).
+The final 429 MB HAR check through an authenticated Claude Code client passed on 2026-10-06: the complete MCP call took 116.2 seconds with default client timeouts, followed by successful reads of the exact returned index and response-body paths. See the verification notes in [README.md](README.md).
 
 ### Added
 

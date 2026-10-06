@@ -8,7 +8,7 @@ Runs over **stdio** on Node.js 22 or later, using the official MCP TypeScript SD
 
 Package: [`@misha_m.g/jira-mcp`](https://www.npmjs.com/package/@misha_m.g/jira-mcp).
 
-Release status: `0.1.3` is prepared for the next release and is not published yet. Until publication, run a source checkout or a locally packed archive as described below. See [CHANGELOG.md](CHANGELOG.md) for the planned changes.
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 Create an env file using [`.env.example`](.env.example), fill in your Jira credentials, and add the following to your MCP client configuration:
 
