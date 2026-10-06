@@ -86,3 +86,31 @@ test('literal dotted keys and inherited property names cannot masquerade as HAR/
   assert.equal(row.status, 200); assert.equal(row.rpcMethod, 'real'); assert.equal(row['params.method'], 'nested');
   assert.equal(row.error, false); assert.equal(row.errorText, undefined); assert.doesNotMatch(JSON.stringify(row), /ignored|fake/);
 }));
+
+test('malformed RPC IDs/versions remain unknown, including batch elements; scalar IDs and legacy ConfD still work', async () => fixture(async (source, directory) => {
+  const invalid = [
+    '{"id":{},"result":0}', '{"id":[],"result":0}', '{"id":true,"result":0}', '{"id":1e999,"result":0}',
+    '{"jsonrpc":"wrong","id":1,"result":0}', '{"jsonrpc":null,"id":1,"result":0}', '{"jsonrpc":{},"id":1,"result":0}',
+    '{"jsonrpc":2.0,"id":1,"result":0}',
+    '[{"id":1,"result":0},{"id":{},"result":0}]',
+  ];
+  const valid = ['{"id":1,"result":0}', '{"id":"legacy","result":0}', '{"jsonrpc":"2.0","id":null,"result":0}'];
+  const partialError = '[{"id":{},"result":0},{"id":1,"error":{"message":"known failure"}}]';
+  await writeFile(source, JSON.stringify({ log: { entries: [...invalid, ...valid, partialError].map(body => harEntry(undefined, body)) } }));
+  await prepareHar(source, directory);
+  const result = await index(directory);
+  for (const row of result.slice(0, invalid.length)) { assert.equal(row.error, null); assert.ok(row.errorReason); }
+  for (const row of result.slice(invalid.length, -1)) { assert.equal(row.error, false); assert.equal(row.errorReason, undefined); }
+  assert.equal(result.at(-1).error, true); assert.ok(result.at(-1).errorReason);
+}));
+
+test('error-text preview marks discarded values at the exact limit without falsely marking a complete message', async () => fixture(async (source, directory) => {
+  const response = (message: string, data?: unknown) => JSON.stringify({ id: 1, error: { message, ...(data === undefined ? {} : { data }) } });
+  const bodies = [response('x'.repeat(1024), { detail: 'omitted' }), response('x'.repeat(1024)), response('x'.repeat(1023), { detail: 'omitted' }),
+    response('short', { first: 'y'.repeat(1100), second: 'omitted' })];
+  await writeFile(source, JSON.stringify({ log: { entries: bodies.map(body => harEntry(undefined, body)) } }));
+  await prepareHar(source, directory);
+  const result = await index(directory);
+  for (const i of [0, 2, 3]) { assert.equal(result[i].error, true); assert.equal(result[i].errorText.length, 1024); assert.ok(result[i].truncatedFields.includes('errorText')); }
+  assert.equal(result[1].errorText.length, 1024); assert.equal(result[1].truncatedFields, undefined);
+}));

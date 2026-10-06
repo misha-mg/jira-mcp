@@ -114,8 +114,9 @@ type RpcInfo = { rpcMethod?: string; path?: string; th?: string | number | boole
 async function rpc(path: string, response: boolean, signal?: AbortSignal): Promise<RpcInfo> {
   const info: RpcInfo = { error: null, truncatedFields: [] };
   let batch = false, records = 0, unknown = false, anyError = false;
-  let record: { id: boolean; result: boolean; error: boolean } | undefined;
-  const texts: string[] = [];
+  let record: { id: boolean; result: boolean; error: boolean; invalid: boolean } | undefined;
+  let errorText = '';
+  let hasErrorText = false;
   const add = (key: keyof RpcInfo, value: unknown, truncated?: boolean) => {
     // Batch request previews use the first occurrence; all response elements are checked.
     if (info[key] === undefined) (info as Record<string, unknown>)[key] = value;
@@ -127,10 +128,10 @@ async function rpc(path: string, response: boolean, signal?: AbortSignal): Promi
       if (!p.length && event.kind === 'start' && event.type === 'array') batch = true;
       const isRecord = batch ? p.length === 1 : p.length === 0;
       if (isRecord && event.kind === 'start' && event.type === 'object') {
-        record = { id: false, result: false, error: false }; records++;
+        record = { id: false, result: false, error: false, invalid: false }; records++;
       } else if (batch && isRecord && event.kind === 'start' && event.type === 'array') unknown = true;
       else if (isRecord && event.kind === 'end' && event.type === 'object') {
-        if (!record || !record.id || !(record.result || record.error)) unknown = true;
+        if (!record || !record.id || record.invalid || !(record.result || record.error)) unknown = true;
         if (record?.error) anyError = true;
         record = undefined;
       } else if (isRecord && event.kind === 'end' && !['object', 'array'].includes(event.type)) unknown = true;
@@ -138,7 +139,19 @@ async function rpc(path: string, response: boolean, signal?: AbortSignal): Promi
       if (parts.some(part => part.includes('.'))) return;
       const key = parts.join('.');
       if (record) {
-        if (parts.length === 1 && key === 'id') record.id = true;
+        if (parts.length === 1 && key === 'id') {
+          if (event.kind === 'start' && ['object', 'array'].includes(event.type)) record.invalid = true;
+          if (event.kind === 'end' && !['object', 'array'].includes(event.type)) {
+            const valid = event.type === 'string' || event.type === 'number' && !event.truncated && Number.isFinite(Number(event.value)) || event.value === null;
+            record.id = valid;
+            if (!valid) record.invalid = true;
+          }
+        }
+        // Missing jsonrpc is accepted for legacy ConfD; an explicit version must be valid.
+        if (parts.length === 1 && key === 'jsonrpc') {
+          if (event.kind === 'start' && ['object', 'array'].includes(event.type)) record.invalid = true;
+          if (event.kind === 'end' && (event.type !== 'string' || event.truncated || event.value !== '2.0')) record.invalid = true;
+        }
         if (parts.length === 1 && key === 'result') record.result = true;
         if (parts.length === 1 && key === 'error' && event.kind !== 'chunk') {
           if (event.kind === 'start' && ['object', 'array'].includes(event.type)) record.error = true;
@@ -154,10 +167,13 @@ async function rpc(path: string, response: boolean, signal?: AbortSignal): Promi
         if (key === 'params.th' || key === 'th') add('th', event.type === 'number' ? Number(event.value) : event.value, event.truncated);
         if (key === 'params.method') add('params.method', event.value, event.truncated);
       } else if (key === 'error.message' || key === 'error.data' || key.startsWith('error.data.')) {
-        if (event.value !== null && event.value !== undefined && texts.join(' | ').length < FIELD_LIMIT) {
-          texts.push(String(event.value));
-          if (event.truncated || texts.join(' | ').length > FIELD_LIMIT) {
-            if (!info.truncatedFields.includes('errorText')) info.truncatedFields.push('errorText');
+        if (event.value !== null && event.value !== undefined) {
+          const text = (hasErrorText ? ' | ' : '') + String(event.value);
+          const remaining = FIELD_LIMIT - errorText.length;
+          errorText += text.slice(0, remaining);
+          hasErrorText = true;
+          if ((event.truncated || text.length > remaining) && !info.truncatedFields.includes('errorText')) {
+            info.truncatedFields.push('errorText');
           }
         }
       }
@@ -165,7 +181,7 @@ async function rpc(path: string, response: boolean, signal?: AbortSignal): Promi
     if (response) {
       info.error = anyError ? true : records > 0 && !unknown ? false : null;
       if (unknown || !records) info.errorReason = 'Not every element is a recognizable JSON-RPC response.';
-      if (texts.length) info.errorText = texts.join(' | ').slice(0, FIELD_LIMIT);
+      if (hasErrorText) info.errorText = errorText;
     }
   } catch (error) {
     if (signal?.aborted) throw new SafeError('Attachment operation cancelled.');

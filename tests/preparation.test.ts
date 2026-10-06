@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, rm, symlink, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { gzipSync } from 'node:zlib';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { pack } from 'tar-stream';
+import { Pax } from 'tar';
 import { AttachmentStore } from '../src/attachments.js';
 import { config, mockClient } from './helpers.js';
 import { tokens } from '../src/output.js';
@@ -70,6 +71,21 @@ test('archive budget is shared across preparations and caches and failures clean
     await assert.rejects(readFile(`${rows[1].path}.extracted/index.jsonl`), { code: 'ENOENT' });
   }
 }, { maxExtractedBytes: 2300 }));
+
+test('unsupported global PAX and sparse metadata retain originals and remove all partial output', async () => fixture(async store => {
+  const data = await archive();
+  const sparse = pack(); const chunks: Buffer[] = [];
+  const reading = (async () => { for await (const chunk of sparse) chunks.push(chunk as Buffer); })();
+  sparse.entry({ name: 'sparse', pax: { 'GNU.sparse.map': '0,3' } }, 'abc'); sparse.finalize(); await reading;
+  const inputs = [gzipSync(Buffer.concat([new Pax({ path: '../escape' }, true).encode(), gunzipSync(data)])), gzipSync(Buffer.concat(chunks))];
+  for (const [i, input] of inputs.entries()) {
+    const row = first(await store.download(mockClient(() => new Response(new Uint8Array(input))), 'DEMO-1',
+      [{ id: String(i + 1), filename: 'unsupported.tar.gz', mimeType: 'application/gzip', size: input.length }]));
+    assert.match(row.preparation.skipped, /Global PAX|Sparse archive/);
+    assert.deepEqual(await readFile(row.path), input);
+    await assert.rejects(readdir(row.path + '.extracted'), { code: 'ENOENT' });
+  }
+}));
 
 test('symlink preparation directories and markers are refused without touching their targets', async () => fixture(async (store, folder) => {
   const issueFolder = join(folder, config.sessionId, 'DEMO-1'); await mkdir(issueFolder, { recursive: true });

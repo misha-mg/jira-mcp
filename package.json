@@ -30,12 +30,13 @@
     "@modelcontextprotocol/server": "^2.0.0",
     "js-tiktoken": "^1.0.21",
     "stream-json": "^3.7.0",
-    "tar-stream": "^3.2.2",
+    "tar": "^7.5.22",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^22.20.3",
+    "tar-stream": "^3.2.2",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"
   },
