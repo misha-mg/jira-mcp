@@ -40,7 +40,7 @@ try {
       ['get_attachments', { key: issueKey! }],
     ] as const) {
       const result = await client.callTool({ name, arguments: args });
-      console.log(JSON.stringify({ tool: name, result }, null, 2));
+      console.log(JSON.stringify({ tool: name, isError: result.isError === true }));
       if (result.isError) throw new Error(`${name} failed.`);
     }
   }

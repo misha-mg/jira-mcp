@@ -77,9 +77,13 @@ The token owner's Jira permissions still apply. The server uses HTTP Basic authe
 | `JIRA_CLOUD_ID` | No | Discovered using the site's public `/_edge/tenant_info` endpoint when omitted |
 | `JIRA_READ_ONLY` | No | `false`; set `true` to expose only read tools. The example env file uses `true` |
 | `JIRA_SESSION_ID` | No | New UUID per process; set explicitly to share a session directory between processes |
-| `JIRA_MAX_FILE_BYTES` | No | `50000000` (50 MB) per file |
-| `JIRA_MAX_CALL_BYTES` | No | `200000000` (200 MB) downloaded per call |
-| `JIRA_TIMEOUT_MS` | No | `30000` per HTTP request, including body consumption |
+| `JIRA_MAX_FILE_BYTES` | No | `536870912` (512 MiB) per file |
+| `JIRA_MAX_CALL_BYTES` | No | `1073741824` (1 GiB) downloaded per call |
+| `JIRA_TIMEOUT_MS` | No | `30000` per ordinary Jira API request, including body consumption |
+| `JIRA_DOWNLOAD_TIMEOUT_MS` | No | `600000` (10 minutes) per file, including HTTP body consumption |
+| `JIRA_DOWNLOAD_IDLE_TIMEOUT_MS` | No | `30000` (30 seconds) waiting for headers or more download data |
+| `JIRA_MAX_EXTRACTED_BYTES` | No | `1073741824` (1 GiB) actual expanded TAR stream bytes per call, including skipped data, metadata and padding |
+| `JIRA_MAX_ARCHIVE_ENTRIES` | No | `20000` entries per TAR.GZ archive |
 | `JIRA_VIDEO_FRAMES` | No | `true`; set `false` to download videos without extracting frame previews |
 | `JIRA_FFMPEG_PATH` | No | Absolute path to the host's FFmpeg executable; otherwise `ffmpeg` on `PATH` |
 | `JIRA_FFPROBE_PATH` | No | Absolute path to ffprobe; defaults to the executable beside an explicit `JIRA_FFMPEG_PATH`, otherwise `ffprobe` on `PATH` |
@@ -94,7 +98,7 @@ Credentials and downloads are excluded from Git and npm packaging. Missing or in
 |---|---|---|
 | `get_issue` | `key`, optional `comments` (default `false`) | Full projected issue as JSON; all accessible comments when requested |
 | `search_issues` | `jql`, optional `limit` (default 10, maximum 50) | One JSON line per issue, followed by `shown` and `has_more` |
-| `get_attachments` | `key`, optional `ids` (up to 100) | Downloaded file paths and metadata; videos also include a folder of sampled JPEG frames, or a frame skip reason |
+| `get_attachments` | `key`, optional `ids` (up to 100) | Downloaded paths and metadata; HAR/TAR.GZ include preparation directory/index; videos include sampled JPEG frames; failures include skip reasons |
 | `add_comment` | `key`, `body` | Comment ID and confirmation |
 | `transition_issue` | `key`, `to`, optional `resolution`, `comment` | Target status and confirmation |
 
@@ -132,7 +136,7 @@ Files are stored under:
 
 Attachment contents are never returned as base64, inline media, or embedded resources. The client must have its own local file-reading tool with access to the configured directory. Claude Desktop needs a suitable filesystem/image-reading integration; a returned path alone does not grant file access.
 
-Filenames are sanitized and prefixed with the attachment ID. Repeated calls use stable paths; an existing regular file of the same size is reused without a checksum comparison. Downloads use temporary files and atomic renames. Partial files are removed, and byte limits are enforced against the actual stream. Files are not executed or unpacked.
+Filenames are sanitized and prefixed with the attachment ID. Repeated calls use stable paths; an existing regular file of the same size is reused without a checksum comparison. Downloads use temporary files and atomic renames. Partial files are removed, and byte limits are enforced against the actual stream. HAR and TAR.GZ are prepared as described below. Extracted archive members are saved as-is and never run through other processors. Files are never executed.
 
 The base directory, session directory, issue directory, and existing destination must not be symlinks. Use a directory controlled by the account running the server; the server is not designed for a directory tree concurrently modified by an untrusted local user.
 
@@ -141,6 +145,62 @@ A generated session ID identifies a **server process**, not a Claude conversatio
 The attachment response currently has a 4,000-token reference budget. If more entries would exceed it, remaining files are not downloaded and the response reports this. Read their IDs with `get_issue`, then call `get_attachments` with selected IDs. Paths are never shortened.
 
 HTTP redirects are refused; attachment requests use `redirect=false` so credentials cannot be forwarded to another host. A site returning a redirect despite that flag produces an explicit error.
+
+### HAR and TAR.GZ preparation
+
+Implemented in the current source branch; the published `0.1.2` package does not include this preparation yet. `get_attachments` automatically prepares files ending in `.har`, `.tar.gz`, or `.tgz`, without new tools or input parameters. Other formats retain their original files; video previews keep their existing behavior.
+
+A successful attachment line adds a compact reference:
+
+```json
+{
+  "preparation": {
+    "kind": "har",
+    "directory": "/absolute/cache/session/DEMO-123/101-network.har.har",
+    "index": "/absolute/cache/session/DEMO-123/101-network.har.har/index.jsonl",
+    "count": 42
+  }
+}
+```
+
+Read `index.jsonl` first, search it with Grep, then read the selected body or extracted file with Read's `offset` and `limit`. Contents are not embedded in MCP responses. Both kinds use a private completion marker keyed by attachment ID and original size. Only completed results are reused, with `preparation.reused=true`. Incomplete directories are regenerated. A processing error or MCP cancellation stops streams and removes partial preparation output, retaining a completed original download. The result reports `preparation.skipped` when preparation fails. An unsafe cache directory or symlink is refused; remove it from your controlled cache to retry. The cache does not detect content replacement with the same ID/size. Use one writer per issue/session directory while preparing new results; publication of these folders is not atomic across processes.
+
+HAR layout:
+
+```text
+101-network.har
+101-network.har.har/
+  .complete.json
+  index.jsonl
+  entries/
+    0001.request.txt
+    0001.response.txt
+    0042.request.txt
+    0042.response.txt
+```
+
+The index has one line per `log.entries` object in source order, numbered from 1 (at least four filename digits). Bodies exist only when the corresponding HAR `text` string exists. Fields include `entry`, `startedDateTime`, `timeMs`, HTTP `method`, `url` without query values/userinfo/fragment, `status`, `rpcMethod`, `path`, `th`, `params.method`, `error`, `errorText`, original UTF-8 `requestBytes`/`responseBytes`, and relative `requestBody`/`responseBody` paths. Scalar previews are limited to 1,024 UTF-16 code units; `truncatedFields` identifies shortened values. Full text remains available in the body and original HAR. Missing fields are omitted.
+
+JSON-RPC methods are read from the request body, falling back to `/jsonrpc/<method>`. Parameter previews use `params.path`, `params.th`, and `params.method` (with top-level `path`/`th` also recognized). Response checks inspect every element of a batch. `error=true` means a non-null RPC error was found, even with HTTP 200; `errorText` contains a bounded preview of `error.message` and scalar values under `error.data`. `error=false` requires a parsed, recognizable response with an ID and result, with no error. Missing bodies, malformed/non-RPC responses and unrecognized batch elements use `error=null` with `errorReason`. A batch with a known error and unrecognized elements still reports the known error and the incomplete check reason. Encoded bodies, including base64, retain their encoding and use `error=null`: this implementation does not automatically decode them.
+
+The [stream-json parser](https://github.com/uhop/stream-json) never assembles an entire HAR, entry, key, or body string. `_initiator` and unrelated fields are discarded while parsing. Body files are streamed to disk, checked for RPC fields in a bounded-memory second pass, then prepared for line-based reading inside `har.ts`. JSON-looking bodies get structural newlines; any remaining long line, including huge string values such as `get_schema`, is wrapped at 2,000 UTF-16 code units. `requestView`/`responseView` report `formatted`, `lineWrapped`, `representation`, and `storedBytes`. A `readable-text-view` can contain newlines inside a JSON string and is **not valid JSON or a byte-for-byte body copy**; use the original HAR when exact serialization matters. No shared text-chunk processor or additional summary is created. JSON nesting deeper than 128 levels is refused.
+
+TAR.GZ layout:
+
+```text
+102-diagnostics.tar.gz
+102-diagnostics.tar.gz.extracted/
+  .complete.json
+  index.jsonl
+  files/var/log/system.log
+  files/var/debug/confd/running_config.xml
+```
+
+The index records each effective library-resolved `path`, actual `size`, entry `type`, `classification` (`text`, `binary`, or `unknown`), and a relative `extractedPath` or `skipped` reason. Classification uses up to 8 KiB of data and is only a hint. Empty files and non-file entries are `unknown`. Paths longer than 4,096 code units are refused and their index preview is marked `pathTruncated`.
+
+Extraction uses [tar-stream](https://github.com/mafintosh/tar-stream) and Node's GZIP stream, including library support for USTAR, PAX and GNU long names. Absolute/Windows paths, `..` components, backslashes, links, devices, FIFOs, sparse and unsupported entries are refused and indexed. Duplicate paths and file/directory conflicts never overwrite earlier files. Private directories/files use modes 0700/0600; ownership and executable permissions are not restored. The actual expanded stream is metered before the TAR parser, including refused entries and metadata; cached results also count against the call's expanded-byte budget. GZIP/TAR corruption or exceeding byte/entry limits stops preparation and removes its folder. Nested HAR, video and archives remain ordinary extracted files; journal/CDB/PCAP payloads are not decoded.
+
+Download deadlines abort the HTTP request itself; actual byte limits and metadata-size checks still apply. These deadlines cover downloads, not the complete synchronous tool call: HAR preparation and archive extraction add time. Client tool deadlines remain independent; see the verification commands below.
 
 ### Video frame previews
 
@@ -169,7 +229,7 @@ If extraction is disabled, unavailable, unsafe, unsupported, or fails, the respo
 Safety limits are fixed to keep the change small:
 
 - At most 24 frames per video, 1 MB per JPEG, 10 MB of JPEGs per video, and 20 MB across one tool call. Reused frames count toward the call budget; failed decoder output also consumes its reserved allowance. These limits are separate from the original download byte limits.
-- A shared 60-second extraction budget per call, including probing; decoder processes run sequentially with one decoding/filtering/encoding thread. HTTP download time is governed separately by `JIRA_TIMEOUT_MS`.
+- A shared 60-second extraction budget per call, including probing; decoder processes run sequentially with one decoding/filtering/encoding thread. HTTP download time is governed separately by `JIRA_DOWNLOAD_TIMEOUT_MS` and `JIRA_DOWNLOAD_IDLE_TIMEOUT_MS`.
 - Source duration must be finite and at most 24 hours; dimensions must be positive, at most 8192 per side and 8,847,360 pixels in total. Unknown duration and sources beyond these limits are skipped.
 - Only MOV/MP4, Matroska/WebM and AVI containers are accepted, with H.264, HEVC, VP8, VP9, AV1, MPEG-4 or MJPEG video. Video MIME types and common video filename extensions trigger probing; metadata does not bypass container validation.
 - Decoder processes use argument arrays without a shell, receive no Jira credentials, and have bounded stdout/stderr. Input is restricted to the local file protocol and the allowed container formats; playlists, network protocols, and MOV external track references are blocked. FFmpeg writes JPEGs to a bounded pipe; Node writes private files in a temporary directory and publishes the complete folder by atomic rename. Failures remove temporary results. Paths and cached files are checked for symlinks.
@@ -204,9 +264,25 @@ To test a real issue after configuring `.env`:
 npm run smoke -- --live --issue DEMO-123
 ```
 
-Replace `DEMO-123` with an issue you can access. This explicitly enables read-only mode, reads the issue and its comments, searches for it, and downloads its attachments. The output contains issue data; no comments or transitions are written.
+Replace `DEMO-123` with an issue you can access. This explicitly enables read-only mode, reads the issue and its comments, searches for it, and downloads its attachments. The smoke log reports tool names and success/error flags without printing issue or attachment contents; no comments or transitions are written.
 
-To test an archive through `npx` before publishing:
+Optional large-file checks use synthetic loopback HTTP data only and remove their temporary downloads:
+
+```sh
+npx tsx scripts/check-large-attachment.ts # 429 MB, MCP SDK, server heap capped at 128 MiB
+npx tsx scripts/check-claude-large.ts     # Real authenticated Claude Code CLI, 429 MB, throttled download
+```
+
+The Claude check requires `claude` on PATH and an existing Claude login. It enables only this synthetic MCP server and Read, and tests the client's default timeout settings without overrides. It downloads and prepares the HAR, reads the index, then reads selected lines of the long response body. A server-only or MCP SDK check does not establish Claude Code timeout compatibility. `TEST_FILE_BYTES` and `TEST_DELAY_MS` can adjust these fixtures. The fixtures do not use Jira credentials or working attachments. Desktop/other clients, a real 429 MB Jira download, and slower calls require their own verification.
+
+Local verification on 2026-10-06:
+
+- Real Claude Code CLI 2.1.289 completed a synthetic 429,000,000-byte HAR call with default client timeouts: 117.2 seconds downloading, 3.8 seconds preparing, 121.0 seconds total. The client then read the index and selected lines of the response body. The fixture included a 150 MB schema string and a large ignored `_initiator`; server heap stayed below 82 MB with a 128 MiB heap limit (peak observed RSS about 258 MB). This establishes the tested CLI scenario, not every client/network duration.
+- A separate MCP SDK call completed the same-size synthetic HAR under the same heap limit. SDK success is recorded separately from the Claude client check.
+- A real 45.6 MB HAR produced 751 index rows, including 39 JSON-RPC errors at HTTP 200 with error text; 424 responses remained explicitly unknown. Real samples confirmed `params.path` and `params.th`. No `params.method` occurred in the available HAR samples; that field and alternate nested ConfD error-data shapes remain covered by synthetic fixtures rather than a real example.
+- A real diagnostic TAR.GZ produced 160 rows. All 129 accepted regular files matched an independent Python `tarfile` streaming comparison byte for byte; member payloads totalled 46,171,361 bytes. Four link/special entries were refused. No working files or credentials are included in the package or test fixtures.
+
+To test an npm archive through `npx` before publishing:
 
 ```sh
 npm run smoke -- --command npx --args -y --package /absolute/path/to/package.tgz jira-mcp
@@ -227,7 +303,9 @@ src/
     types.ts        # Jira DTOs used by the implementation
   adf.ts            # Plain text / ADF conversion
   output.ts         # Serialization and bounded-output helpers
-  attachments.ts    # Paths, downloads, byte limits
+  attachments.ts    # Paths, download deadlines/limits, preparation caches
+  har.ts            # Streaming HAR index, RPC checks, readable bodies
+  archives.ts       # Safe streaming TAR.GZ extraction and index
   tools/            # Five tool schemas and handlers
 ```
 

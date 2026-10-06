@@ -8,6 +8,8 @@ export interface Config {
   siteUrl: string; email: string; token: string; cloudId?: string;
   attachmentDir: string; sessionId: string; readOnly: boolean;
   maxFileBytes: number; maxCallBytes: number; timeoutMs: number;
+  downloadTimeoutMs: number; downloadIdleTimeoutMs: number;
+  maxExtractedBytes: number; maxArchiveEntries: number;
   videoFrames?: boolean; ffmpegPath?: string; ffprobePath?: string;
 }
 
@@ -73,9 +75,13 @@ export async function loadConfig(args = process.argv.slice(2), env = process.env
     attachmentDir: attachmentDir
       ? resolve(args[1] ? dirname(resolve(args[1])) : process.cwd(), attachmentDir)
       : join(cacheHome, 'jira-mcp'),
-    maxFileBytes: positive('JIRA_MAX_FILE_BYTES', 50_000_000),
-    maxCallBytes: positive('JIRA_MAX_CALL_BYTES', 200_000_000),
+    maxFileBytes: positive('JIRA_MAX_FILE_BYTES', 512 * 1024 * 1024),
+    maxCallBytes: positive('JIRA_MAX_CALL_BYTES', 1024 * 1024 * 1024),
     timeoutMs: positive('JIRA_TIMEOUT_MS', 30_000),
+    downloadTimeoutMs: positive('JIRA_DOWNLOAD_TIMEOUT_MS', 600_000),
+    downloadIdleTimeoutMs: positive('JIRA_DOWNLOAD_IDLE_TIMEOUT_MS', 30_000),
+    maxExtractedBytes: positive('JIRA_MAX_EXTRACTED_BYTES', 1024 * 1024 * 1024),
+    maxArchiveEntries: positive('JIRA_MAX_ARCHIVE_ENTRIES', 20_000),
     videoFrames: videoFrames === 'true',
     ffmpegPath: executable('JIRA_FFMPEG_PATH'),
     ffprobePath: executable('JIRA_FFPROBE_PATH'),

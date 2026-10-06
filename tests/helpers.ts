@@ -6,6 +6,7 @@ import type { Issue } from '../src/jira/types.js';
 export const config: Config = {
   siteUrl: 'https://example.atlassian.net', email: 'test@example.com', token: 'test-secret-token', cloudId: 'test-cloud',
   attachmentDir: '/unused', sessionId: 'test-session', readOnly: false, maxFileBytes: 50_000_000, maxCallBytes: 200_000_000, timeoutMs: 1000,
+  downloadTimeoutMs: 600_000, downloadIdleTimeoutMs: 30_000, maxExtractedBytes: 1024 * 1024 * 1024, maxArchiveEntries: 20_000,
 };
 export const issue: Issue = { key: 'DEMO-8901', fields: {
   summary: 'Test issue', status: { name: 'In Progress' }, issuetype: { name: 'Task' },

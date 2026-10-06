@@ -7,12 +7,12 @@ export class JiraClient {
   private cloudId?: Promise<string>;
   constructor(readonly config: Config, private readonly fetcher: Fetch = fetch) {}
 
-  private async request(url: string, method = 'GET', body?: unknown, authenticated = true): Promise<Response> {
+  private async request(url: string, method = 'GET', body?: unknown, authenticated = true, signal?: AbortSignal): Promise<Response> {
     if (method !== 'GET' && this.config.readOnly) throw new SafeError('Write operations are disabled.');
     let response: Response;
     try {
       response = await this.fetcher(url, {
-        method, redirect: 'manual', signal: AbortSignal.timeout(this.config.timeoutMs),
+        method, redirect: 'manual', signal: signal ?? AbortSignal.timeout(this.config.timeoutMs),
         headers: {
           Accept: 'application/json',
           ...(authenticated ? { Authorization: `Basic ${Buffer.from(`${this.config.email}:${this.config.token}`).toString('base64')}` } : {}),
@@ -90,8 +90,9 @@ export class JiraClient {
   transition(key: string, body: unknown) {
     return this.api<void>(`issue/${encodeURIComponent(key)}/transitions`, {}, 'POST', body);
   }
-  async download(id: string): Promise<Response> {
+  async download(id: string, signal?: AbortSignal): Promise<Response> {
     if (!/^\d+$/.test(id)) throw new SafeError('Invalid attachment ID.');
-    return this.request(await this.url(`attachment/content/${id}`, { redirect: 'false' }));
+    return this.request(await this.url(`attachment/content/${id}`, { redirect: 'false' }), 'GET', undefined, true,
+      signal ?? AbortSignal.timeout(this.config.downloadTimeoutMs));
   }
 }

@@ -128,3 +128,14 @@ test('read-only client blocks both write endpoints before HTTP', async () => {
   await assert.rejects(client.addComment('DEMO-8901', { type: 'doc' }), /disabled/);
   await assert.rejects(client.transition('DEMO-8901', {}), /disabled/);
 });
+
+test('large-download and extraction defaults and independent timeouts are validated', async () => {
+  const env = { JIRA_BASE_URL: config.siteUrl, JIRA_EMAIL: config.email, JIRA_API_TOKEN: config.token };
+  const conf = await loadConfig([], env);
+  assert.equal(conf.maxFileBytes, 536_870_912); assert.equal(conf.maxCallBytes, 1_073_741_824);
+  assert.equal(conf.timeoutMs, 30_000); assert.equal(conf.downloadTimeoutMs, 600_000); assert.equal(conf.downloadIdleTimeoutMs, 30_000);
+  assert.equal(conf.maxExtractedBytes, 1_073_741_824); assert.equal(conf.maxArchiveEntries, 20_000);
+  for (const name of ['JIRA_DOWNLOAD_TIMEOUT_MS', 'JIRA_DOWNLOAD_IDLE_TIMEOUT_MS', 'JIRA_MAX_EXTRACTED_BYTES', 'JIRA_MAX_ARCHIVE_ENTRIES']) {
+    for (const value of ['0', '-1', '1.5', 'Infinity', 'not-a-number']) await assert.rejects(loadConfig([], { ...env, [name]: value }), new RegExp(name));
+  }
+});
